@@ -7,8 +7,9 @@ const $ = require('jQuery')
 const {app} = require('electron').remote;
 app.setName('CAM')
 const appRootDir = require('app-root-dir').get() //get the path of the application bundle
-const ffmpeg = appRootDir+'/ffmpeg/ffmpeg'
+const ffmpeg = '/opt/homebrew/bin/ffmpeg'
 const exec = require( 'child_process' ).exec
+const spawn = require( 'child_process' ).spawn
 const si = require('systeminformation');
 const mkdirp = require('mkdirp');
 var ipcRenderer = require('electron').ipcRenderer;
@@ -27,7 +28,14 @@ var userDataPath = path.join(app.getPath('userData'),'Data')
 makeSureUserDataFolderIsThere()
 var savePath
 var isRecording = false
+var subjectCounter = 1
+var sessionCounter = 1
+var taskCounter = 1
+var recordingTimer = null
+var recordingSeconds = 0
+var caffeinateProcess = null
 
+initDefaults()
 startWebCamPreview()
 document.getElementById("recordBtn").onclick = toggleRecording
 
@@ -46,17 +54,72 @@ function updateFilenamePreview() {
 }
 
 
+function padNumber(num) {
+  return String(num).padStart(3, '0')
+}
+
+function initDefaults() {
+  document.getElementById("subjID").value = 'S' + padNumber(subjectCounter)
+  document.getElementById("sessID").value = padNumber(sessionCounter)
+  document.getElementById("taskID").value = 'T' + padNumber(taskCounter)
+  updateFilenamePreview()
+}
+
+function advanceCounters() {
+  taskCounter++
+  document.getElementById("taskID").value = 'T' + padNumber(taskCounter)
+  updateFilenamePreview()
+}
+
+function formatTime(totalSeconds) {
+  var hrs = Math.floor(totalSeconds / 3600)
+  var mins = Math.floor((totalSeconds % 3600) / 60)
+  var secs = totalSeconds % 60
+  return String(hrs).padStart(2, '0') + ':' + String(mins).padStart(2, '0') + ':' + String(secs).padStart(2, '0')
+}
+
+function startRecordingTimer() {
+  recordingSeconds = 0
+  var container = document.getElementById("previewContainer")
+  container.innerHTML = '<p id="recordingTimerDisplay" style="font-size:48px;text-align:center;color:red;font-family:monospace;margin-top:40px;">00:00:00</p>'
+  recordingTimer = setInterval(function() {
+    recordingSeconds++
+    var display = document.getElementById("recordingTimerDisplay")
+    if (display) {
+      display.textContent = formatTime(recordingSeconds)
+    }
+  }, 1000)
+}
+
+function stopRecordingTimer() {
+  if (recordingTimer) {
+    clearInterval(recordingTimer)
+    recordingTimer = null
+  }
+  recordingSeconds = 0
+}
+
 function toggleRecording() {
   if (isRecording == false) {
     stopWebCamPreview()
     rec.startRec()
     isRecording = true
     document.getElementById("recordBtn").style.borderRadius = "20px";
+    startRecordingTimer()
+    caffeinateProcess = spawn('caffeinate', ['-dims'])
+    console.log('caffeinate started, preventing sleep')
   } else if (isRecording == true) {
+    stopRecordingTimer()
+    if (caffeinateProcess) {
+      caffeinateProcess.kill()
+      caffeinateProcess = null
+      console.log('caffeinate stopped')
+    }
     startWebCamPreview()
     rec.stopRec()
     isRecording = false
     document.getElementById("recordBtn").style.borderRadius = "50px";
+    advanceCounters()
   }
 }
 
@@ -94,32 +157,32 @@ function makeSureUserDataFolderIsThere() {
 
 //camera preview on
 function startWebCamPreview() {
-  //clearScreen()
+  var container = document.getElementById("previewContainer")
+  container.innerHTML = ''
   var vidPrevEl = document.createElement("video")
   vidPrevEl.autoplay = true
   vidPrevEl.id = "webcampreview"
-  content.appendChild(vidPrevEl)
-  navigator.webkitGetUserMedia({video: true, audio: false},
-    function(stream) {
+  container.appendChild(vidPrevEl)
+  navigator.mediaDevices.getUserMedia({video: true, audio: false})
+    .then(function(stream) {
       localMediaStream = stream
-      vidPrevEl.src = URL.createObjectURL(stream)
-    },
-    function() {
+      vidPrevEl.srcObject = stream
+    })
+    .catch(function(err) {
+      console.error('Webcam error: ', err)
       alert('Could not connect to webcam')
-    }
-  )
+    })
 }
 
 
 // camera preview off
 function stopWebCamPreview () {
-  if(typeof localMediaStream !== "undefined")
-  {
+  if (localMediaStream) {
     localMediaStream.getVideoTracks()[0].stop()
-    //clearScreen()
-    vidPrevEl = document.getElementById("webcampreview")
-    content.removeChild(vidPrevEl)
+    localMediaStream = undefined
   }
+  var container = document.getElementById("previewContainer")
+  container.innerHTML = ''
 }
 
 
@@ -154,7 +217,7 @@ si.system(function(data) {
 
 // ffmpeg object constructor
 function ff() {
-  this.ffmpegPath = path.join(appRootDir,'ffmpeg','ffmpeg'),
+  this.ffmpegPath = '/opt/homebrew/bin/ffmpeg',
   this.framerate = function () {
 
   },
@@ -167,8 +230,8 @@ function ff() {
   this.screenDeviceID = '1',           // macOS only
   this.videoSize = '1280x720',         // output video dimensions
   this.videoCodec = 'libx264',         // encoding codec libx264
-  this.recQuality = '25',              //0-60 (0 = perfect quality but HUGE files)
-  this.preset = 'ultrafast',
+  this.recQuality = '28',              //0-60 (0 = perfect quality but HUGE files)
+  this.preset = 'veryfast',
   this.videoExt = '.mp4',
   // filter is for picture in picture effect
   this.filter = '"[0]scale=iw/8:ih/8 [pip]; [1][pip] overlay=main_w-overlay_w-10:main_h-overlay_h-10"',
@@ -202,7 +265,7 @@ function ff() {
   },
   this.datestamp = getDateStamp(),
   this.makeOutputFolder = function () {
-    outpath = path.join(savePath, "CAM", getSubjID(), getSessID())
+    outpath = savePath
     console.log(outpath)
     if (!fs.existsSync(outpath)) {
       mkdirp.sync(outpath)
@@ -210,15 +273,11 @@ function ff() {
     return outpath
   }
   this.outputFilename = function() {
-    return path.join(this.makeOutputFolder(), this.getSubjID()+'_'+this.getSessID()+'_'+this.getTaskID()+'_'+getDateStamp()+this.videoExt)
+    var timestamp = moment().format('YYYYMMDD_HHmmss')
+    return path.join(this.makeOutputFolder(), this.getSubjID()+'_'+this.getSessID()+'_'+this.getTaskID()+'_'+timestamp+this.videoExt)
   },
   this.getFramerate = function () {
-    if (sys.isMacBook == true){
-      var framerate = 30
-    } else {
-      var framerate = 29.97
-    }
-    return framerate
+    return 15
   },
   this.startRec = function() {
     cmd = [
@@ -226,12 +285,13 @@ function ff() {
       ' ' + this.shouldOverwrite +
       ' -thread_queue_size ' + this.threadQueSize +
       ' -f ' + this.cameraFormat +
-      ' -framerate ' + this.getFramerate().toString() +
+      ' -framerate 30' +
       ' -video_size ' + this.videoSize +
       ' -i "' + this.cameraDeviceID + '":"' + this.audioDeviceID + '"' +
+      ' -vf hflip' +
       ' -c:v ' + this.videoCodec +
       ' -crf ' + this.recQuality +
-      ' -preset ultrafast' +
+      ' -preset ' + this.preset +
       ' -r ' + this.getFramerate().toString() +
       '  ' + '"' + this.outputFilename() + '"'
     ]
@@ -239,14 +299,20 @@ function ff() {
     console.log('ffmpeg cmd: ')
     console.log(cmd)
     this.isRecording = true
+    console.log('ffmpeg full command: ', cmd)
     exec(cmd,{maxBuffer: 2000 * 1024}, (error, stdout, stderr) => {
       if (error) {
-        console.error(`exec error: ${error}`)
-        alert('Recording stopped!')
+        var stderrStr = stderr || ''
+        if (stderrStr.indexOf('Exiting normally') !== -1 || stderrStr.indexOf('signal 15') !== -1) {
+          console.log('ffmpeg stopped normally')
+          return
+        }
+        console.error('ffmpeg error: ', error.message)
+        console.error('ffmpeg stderr: ', stderr)
+        alert('Recording error: ' + error.message)
         return
       }
-      // console.log(`stdout: ${stdout}`);
-       console.log(`stderr: ${stderr}`);
+      console.log('ffmpeg stderr: ', stderr);
     })
   },
   this.stopRec = function () {

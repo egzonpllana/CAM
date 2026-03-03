@@ -30,18 +30,23 @@ function createWindow () {
   mainWindow = new BrowserWindow({width: 400, height: 600, resizable: false, fullscreenable: false, maximizable: false})
 
   // and load the index.html of the app.
+  var autorecord = process.argv.indexOf('--autorecord') !== -1
+
   mainWindow.loadURL(url.format({
     pathname: path.join(__dirname, 'app.html'),
     protocol: 'file:',
     slashes: true
   }))
 
-  console.log('https://cstar-cam-app.herokuapp.com/'+'update/'+platform+'/'+version)
-  autoUpdater.setFeedURL('https://cstar-cam-app.herokuapp.com/'+'update/'+platform+'/'+version);
-  autoUpdater.checkForUpdates()
+  mainWindow.webContents.on('did-finish-load', function () {
+    if (autorecord) {
+      mainWindow.webContents.executeJavaScript('setTimeout(function(){ toggleRecording(); }, 1500);')
+    }
+  })
 
-  // Open the DevTools.
-  //mainWindow.webContents.openDevTools()
+  // auto-updater disabled (requires code-signed app)
+
+  // mainWindow.webContents.openDevTools()
 
   // Emitted when the window is closed.
   mainWindow.on('closed', function () {
