@@ -17,14 +17,10 @@ When you're done recording click the red square and your video will be saved to 
 
 The original repo has several compatibility issues on modern macOS (Apple Silicon, Node 16+). This fork fixes them. Follow these steps to get it running:
 
-#### 1. Install prerequisites
+#### 1. Install ffmpeg
 
 ```bash
-# Install Homebrew ffmpeg (the bundled x86_64 binary won't work on Apple Silicon)
 brew install ffmpeg
-
-# Install Node.js 16 via Volta (newer versions break native dependencies)
-volta pin node@16
 ```
 
 #### 2. Clone and install
@@ -32,6 +28,7 @@ volta pin node@16
 ```bash
 git clone https://github.com/egzonpllana/CAM.git
 cd CAM
+volta pin node@16
 npm install --ignore-scripts
 ```
 
@@ -43,15 +40,7 @@ The `--ignore-scripts` flag skips Electron's post-install download. Run it manua
 npm_config_arch=x64 node node_modules/electron/install.js
 ```
 
-#### 4. Remove quarantine flag from ffmpeg
-
-macOS may block the bundled ffmpeg. Clear the quarantine attribute:
-
-```bash
-xattr -dr com.apple.quarantine ./ffmpeg/ffmpeg
-```
-
-#### 5. Run
+#### 4. Run
 
 ```bash
 npm start
